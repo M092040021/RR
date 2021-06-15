@@ -1,0 +1,234 @@
+---
+title: "final_project"
+author: "陳柏勳"
+date: "2021/6/15"
+output: html_document
+---
+
+# Packages
+```{r message=FALSE, warning=FALSE}
+library(survival) ##computing survival analyses and load data
+library(survminer) ##summarizing and visualizing 
+library(DMwR2)  ##dealing with NA
+```
+
+# Data
+```{r}
+data(lung,package="survival")
+lung %>% head()
+```
+
+#### inst: 機構代碼
+#### time: 存活時間 (單位為日)
+#### status: “設限”或“事件發生”狀況，0為censored，1為死亡
+#### age: 年紀 (單位為年)
+#### sex: 性別，男性為1，女性為2
+#### ph.ecog: 醫生評估的ECOG體能狀況評估分數(0,1,2,3,4)
+#### ph.karno: 醫生評估的Karnofsky體能狀況評估分數(bad=0,good=100)
+#### pat.karno: 病人自己評估的Karnofsky體能狀況評估分數
+#### meal.cal: 卡路里攝取量
+#### wt.loss: 過去六個月體重下降多少
+
+# K-NN
+```{r}
+lung <- knnImputation(lung)
+lung$status <- ifelse(lung$status == 1, 0, 1)
+lung %>% head()
+```
+
+# KM-estimator
+```{r}
+fit<- survfit(Surv(time, status) ~ 1,data=lung,type="kaplan-meier")
+ggsurvplot(fit)
+```
+
+## log-rank test
+```{r}
+survdiff(Surv(time, status) ~ sex, data = lung)
+fit <- survfit(Surv(time, status) ~ sex, data = lung)
+ggsurvplot(
+  fit,                    
+  pval = TRUE,             # show p-value of log-rank test.
+  conf.int = TRUE,         # show confidence intervals for 
+  conf.int.style = "step", # customize style of confidence intervals
+  xlab = "Time in days",   # customize X axis label.
+  break.time.by = 100,     # break X axis in time intervals by 200.
+  risk.table = "percentage",# absolute number and percentage at risk.
+  risk.table.y.text.col = T,# colour risk table text annotations.
+  surv.median.line = "hv",  # add the median survival pointer.
+  legend.labs = c("Male", "Female"),# change legend labels.
+  palette = c("blue", "red") # custom color palettes.
+)
+surv_pvalue(fit)
+```
+
+## cox
+```{r}
+lung$sex=factor(lung$sex)
+coxmodel=coxph(Surv(time, status)~
+              inst+age+sex+ph.ecog+ph.karno+
+              pat.karno+meal.cal+wt.loss,
+              data=lung)
+summary(coxmodel)
+```
+
+## baseline hazard
+```{r}
+blh=basehaz(coxmodel)
+plot(x=blh$time,y=blh$hazard,xlab="time",ylab="hazard")
+```
+
+## Wald Test(sex)
+```{r}
+## H0:性別變數不影響肺癌死因
+testvar=c(3)
+beta1hat=coxmodel$coefficients[testvar]
+beta10=rep(0,1)
+var11=coxmodel$var[testvar,testvar]
+chiwald=t(beta1hat-beta10)%*%solve(var11)%*%(beta1hat-beta10)
+pvalue_w=1-pchisq(q=chiwald,df=1)
+pvalue_w
+```
+
+## LR Test(sex)
+```{r}
+## H0:性別變數不影響肺癌死因
+lung_sig=lung[,-(testvar+2)]
+coxreduce=coxph(Surv(time, status)~.,data=lung_sig)
+chilr=2*(coxmodel$loglik[2]-coxreduce$loglik[2])
+pvalue_lr=1-pchisq(q=chilr,df=1)
+pvalue_lr
+```
+
+## Score Test(sex)
+```{r}
+## H0:性別變數不影響肺癌死因
+allvar=rep(0,8)
+allvar[-testvar]=coxreduce$coefficients
+cox_score=coxph(Surv(time, status)~.,data=lung,init = allvar,iter=0)
+score.vector=colSums(coxph.detail(cox_score)$score)
+chisc=t(score.vector[testvar])%*%cox_score$var[testvar,testvar]%*%score.vector[testvar]
+pvalue_sc=1-pchisq(chisc,df=1)
+pvalue_sc
+```
+
+
+
+## Wald Test(ph.ecog)
+```{r}
+## 醫生評估ECOG體能狀況不影響肺癌死因
+testvar=c(4)
+beta1hat=coxmodel$coefficients[testvar]
+beta10=rep(0,1)
+var11=coxmodel$var[testvar,testvar]
+chiwald=t(beta1hat-beta10)%*%solve(var11)%*%(beta1hat-beta10)
+pvalue_w=1-pchisq(q=chiwald,df=1)
+pvalue_w
+```
+
+## LR Test(ph.ecog)
+```{r}
+## 醫生評估ECOG體能狀況不影響肺癌死因
+lung_sig=lung[,-(testvar+2)]
+coxreduce=coxph(Surv(time, status)~.,data=lung_sig)
+chilr=2*(coxmodel$loglik[2]-coxreduce$loglik[2])
+pvalue_lr=1-pchisq(q=chilr,df=1)
+pvalue_lr
+```
+
+## Score Test(ph.ecog)
+```{r}
+## 醫生評估ECOG體能狀況不影響肺癌死因
+allvar=rep(0,8)
+allvar[-testvar]=coxreduce$coefficients
+cox_score=coxph(Surv(time, status)~.,data=lung,init = allvar,iter=0)
+score.vector=colSums(coxph.detail(cox_score)$score)
+chisc=t(score.vector[testvar])%*%cox_score$var[testvar,testvar]%*%score.vector[testvar]
+pvalue_sc=1-pchisq(chisc,df=1)
+pvalue_sc
+```
+
+
+
+
+
+
+
+## Wald Test
+```{r}
+## H0:那些臨床變數不影響肺癌死因
+coxmodel=coxph(Surv(time, status)~
+              inst+age+sex+ph.ecog+ph.karno+
+              pat.karno+meal.cal+wt.loss,
+              data=lung)
+summary(coxmodel)
+testvar=c(2,7)
+beta1hat=coxmodel$coefficients[testvar]
+beta10=rep(0,2)
+var11=coxmodel$var[testvar,testvar]
+chiwald=t(beta1hat-beta10)%*%solve(var11)%*%(beta1hat-beta10)
+pvalue_w=1-pchisq(q=chiwald,df=2)
+pvalue_w
+```
+
+## LR Test
+```{r}
+## H0:那些臨床變數不影響肺癌死因
+lung_sig=lung[,-(testvar+2)]
+coxreduce=coxph(Surv(time, status)~.,data=lung_sig)
+chilr=2*(coxmodel$loglik[2]-coxreduce$loglik[2])
+pvalue_lr=1-pchisq(q=chilr,df=2)
+pvalue_lr
+```
+
+## Score Test
+```{r}
+## H0:那些臨床變數不影響肺癌死因
+allvar=rep(0,8)
+allvar[-testvar]=coxreduce$coefficients
+cox_score=coxph(Surv(time, status)~.,data=lung,init = allvar,iter=0)
+score.vector=colSums(coxph.detail(cox_score)$score)
+chisc=t(score.vector[testvar])%*%cox_score$var[testvar,testvar]%*%score.vector[testvar]
+pvalue_sc=1-pchisq(chisc,df=2)
+pvalue_sc
+```
+
+
+
+## 是否符合cox模型假設
+```{r}
+##The proportional hazards (PH) assumption can be checked using statistical tests and graphical diagnostics based on the scaled Schoenfeld residuals.
+cox.zph(coxmodel)
+cox.zph(coxreduce)
+cox.zph(coxreduce) %>% plot()
+ggcoxzph(cox.zph(coxreduce))
+```
+
+
+# Final model
+```{r}
+coxreduce=coxph(Surv(time, status)~
+              inst+sex+ph.ecog+ph.karno+
+              pat.karno+wt.loss,
+              data=lung)
+summary(coxreduce)
+cox.zph(coxreduce)
+```
+
+# 結論
+#### 女性比男性更容易具有 APOBEC突變特徵
+#### 病患具有較高APOBEC突變特徵，免疫療法會比較有效。
+#### 換句話說，APOBEC突變特徵可能成為早期診斷以及免疫治療的潛在生物標誌物。
+#### https://research.sinica.edu.tw/asia-lung-cancer-protein/
+
+
+
+
+
+
+
+
+
+
+
+
